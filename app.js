@@ -58,7 +58,7 @@ fetch('cards.json').then(r=>{if(!r.ok)throw Error('Не удалось загр�
 
 // Награды и администрация выполняются только на сервере Appwrite Functions.
 // Вставьте ID опубликованной функции в следующую строку (не секретный ключ).
-const REWARDS_FUNCTION_ID='REPLACE_WITH_FUNCTION_ID';
+const REWARDS_FUNCTION_ID='6ad7690b002d25e9769e';
 const fn=new (await import('https://cdn.jsdelivr.net/npm/appwrite@21.0.0/+esm')).Functions(client);
 let rewardProfile=null;
 async function server(action,extra={}){
