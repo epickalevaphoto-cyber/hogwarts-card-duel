@@ -1088,5 +1088,5 @@ $('#loadPointHistory').onclick=loadPointHistory;
 // ==========================================
 
 await loadCards();
-
 await refresh();
+await loadTournament();
