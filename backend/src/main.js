@@ -27,9 +27,7 @@ const ADMIN_USER_ID = process.env.ADMIN_USER_ID || '';
 const TABLES = {
   PROFILES: 'profiles',
   REWARDS: 'reward_codes',
-  REDEMPTIONS: 'redemptions',
-  YEARS: 'school_years',
-  POINTS: 'tournament_points'
+  REDEMPTIONS: 'redemptions'
 };
 
 // ------------------------------------------------------------
@@ -591,130 +589,75 @@ export default async ({ req, res, log, error }) => {
       );
     }
 
-    const action = body.action;
-    if (!userId && action !== 'tournament') {
-      fail('Сначала войдите в аккаунт.', 401);
+    if (!userId) {
+      fail(
+        'Сначала войдите в аккаунт.',
+        401
+      );
     }
 
+    const action = body.action;
 
-    // Турнирные годы и начисления. Только администратор может изменять данные.
-    // Гостям разрешено только читать общую таблицу.
-    if (action === 'tournament' || action === 'adminYears' ||
-        action === 'saveYear' || action === 'setYearStatus' ||
-        action === 'addPoints' || action === 'pointHistory') {
-      const adminAction = action !== 'tournament';
-      if (adminAction) requireAdmin();
+    // ========================================================
+    // BOOTSTRAP — ПЕРВОНАЧАЛЬНАЯ НАСТРОЙКА
+    // ========================================================
 
-      const years = await listRows(TABLES.YEARS);
-      const orderedYears = years.sort((a, b) =>
-        Number(b.number) - Number(a.number));
-      const today = new Date().toISOString().slice(0, 10);
-      const effectiveStatus = y => y.status === 'active' && y.endDate < today
-        ? 'finished' : y.status;
-      const yearView = y => ({
-        id: y.$id, number: y.number, startDate: y.startDate,
-        endDate: y.endDate, status: effectiveStatus(y)
+    if (action === 'bootstrap') {
+      requireAdmin();
+
+      // Создание базы, если она отсутствует.
+
+      try {
+        await api(
+          'POST',
+          '/tablesdb',
+          {
+            databaseId: DATABASE_ID,
+            name: 'Hogwarts Duel'
+          }
+        );
+
+      } catch (err) {
+        if (err.status !== 409) {
+          throw err;
+        }
+      }
+
+      // Создание таблиц.
+
+      for (const tableId of Object.values(TABLES)) {
+        try {
+          await createTable(tableId);
+
+        } catch (err) {
+          if (err.status !== 409) {
+            throw err;
+          }
+        }
+
+        // Создание столбцов.
+
+        for (const column of SCHEMA[tableId]) {
+          try {
+            await createColumn(
+              tableId,
+              column
+            );
+
+          } catch (err) {
+            if (err.status !== 409) {
+              throw err;
+            }
+          }
+        }
+      }
+
+      return res.json({
+        ok: true,
+        message:
+          'Структура базы данных создана. ' +
+          'Подождите 20–40 секунд, пока столбцы станут доступны.'
       });
-
-      if (action === 'adminYears') {
-        return res.json({ok:true, years:orderedYears.map(yearView)});
-      }
-
-      if (action === 'saveYear') {
-        const number = positiveInteger(body.number, 1, 99999);
-        const startDate = normalizeString(body.startDate, 10);
-        const endDate = normalizeString(body.endDate, 10);
-        const validDate = value => /^\\d{4}-\\d{2}-\\d{2}$/.test(value) &&
-          !Number.isNaN(Date.parse(value)) &&
-          new Date(value).toISOString().slice(0,10) === value;
-        if (!validDate(startDate) || !validDate(endDate) || endDate < startDate) {
-          fail('Проверьте даты начала и окончания.');
-        }
-        const existing = orderedYears.find(y => y.$id === body.yearId);
-        if (orderedYears.some(y => Number(y.number) === number &&
-            y.$id !== existing?.$id)) fail('Такой номер учебного года уже существует.');
-        if (existing) {
-          if (effectiveStatus(existing) === 'finished') {
-            fail('Завершённый год нельзя редактировать.');
-          }
-          await updateRow(TABLES.YEARS, existing.$id, {number,startDate,endDate});
-        } else {
-          await createRow(TABLES.YEARS, randomId(),
-            {number,startDate,endDate,status:'planned',createdAt:now()});
-        }
-        return res.json({ok:true,message:'Учебный год сохранён.'});
-      }
-
-      if (action === 'setYearStatus') {
-        const year = years.find(y => y.$id === body.yearId);
-        if (!year) fail('Учебный год не найден.',404);
-        const status = normalizeString(body.status, 20);
-        if (!['active','finished'].includes(status)) fail('Недопустимый статус.');
-        if (effectiveStatus(year) === 'finished') fail('Завершённый год нельзя возобновить.');
-        if (status === 'active') {
-          if (year.status !== 'planned') fail('Год уже запущен.');
-          if (year.endDate < today) fail('Дата окончания уже прошла.');
-          if (years.some(y => y.$id !== year.$id && effectiveStatus(y) === 'active')) {
-            fail('Сначала завершите текущий учебный год.');
-          }
-        }
-        await updateRow(TABLES.YEARS, year.$id, {status});
-        return res.json({ok:true,message:status === 'active' ? 'Учебный год начат.' : 'Учебный год завершён.'});
-      }
-
-      if (action === 'addPoints') {
-        const year = years.find(y => y.$id === body.yearId);
-        if (!year || effectiveStatus(year) !== 'active' ||
-            year.startDate > today) fail('Учебный год не активен.');
-        const targetId = normalizeString(body.userId,36);
-        if (!/^[a-zA-Z0-9_]{1,36}$/.test(targetId)) fail('Некорректный игрок.');
-        await getRow(TABLES.PROFILES,targetId);
-        const points = Number(body.points);
-        if (!Number.isSafeInteger(points) || points === 0 ||
-            Math.abs(points) > 1000000) fail('Укажите целое число очков от -1000000 до 1000000 (не ноль).');
-        const reason = normalizeString(body.reason,500);
-        if (!reason) fail('Укажите причину начисления или списания.');
-        await createRow(TABLES.POINTS,randomId(),{
-          yearId:year.$id,userId:targetId,points,reason,
-          adminId:userId,createdAt:now()
-        });
-        return res.json({ok:true,message:'Очки сохранены в истории.'});
-      }
-
-      if (action === 'pointHistory') {
-        const yearId = normalizeString(body.yearId,36);
-        const year = years.find(y => y.$id === yearId);
-        if (!year) fail('Учебный год не найден.');
-        const rows = await listRows(TABLES.POINTS,[equalQuery('yearId',yearId)]);
-        const profiles = await listRows(TABLES.PROFILES);
-        const names = Object.fromEntries(profiles.map(p => [p.$id,p.nickname]));
-        return res.json({ok:true,history:rows.sort((a,b) =>
-          b.createdAt.localeCompare(a.createdAt)).map(p => ({
-          id:p.$id,nickname:names[p.userId] || p.userId,
-          points:p.points,reason:p.reason,createdAt:p.createdAt
-        }))});
-      }
-
-      // Публичная турнирная таблица; приватные данные профилей не выдаём.
-      const requested = orderedYears.find(y => y.$id === body.yearId);
-      const selected = requested || orderedYears.find(y => effectiveStatus(y) === 'active') ||
-        orderedYears[0];
-      if (!selected) return res.json({ok:true,years:[],year:null,ranking:[]});
-      const [points, profiles] = await Promise.all([
-        listRows(TABLES.POINTS,[equalQuery('yearId',selected.$id)]),
-        listRows(TABLES.PROFILES)
-      ]);
-      const totals = {};
-      for (const row of points) totals[row.userId] =
-        (totals[row.userId] || 0) + Number(row.points || 0);
-      const ranking = profiles.filter(p => p.approved === true ||
-        p.$id === ADMIN_USER_ID).map(p => ({
-        nickname:p.nickname || 'Игрок',
-        points:totals[p.$id] || 0
-      })).sort((a,b) => b.points-a.points ||
-        a.nickname.localeCompare(b.nickname,'ru'));
-      return res.json({ok:true,years:orderedYears.map(yearView),
-        year:yearView(selected),ranking});
     }
 
     // ========================================================

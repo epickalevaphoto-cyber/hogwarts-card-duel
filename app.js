@@ -101,10 +101,8 @@ function page(name) {
   }
 
   if (name === 'admin') {
-    if (!rewardProfile?.admin) { page('home'); return; }
-    updateRewardsUI(); loadAdminTournament();
+    updateRewardsUI();
   }
-  if (name === 'tournament') loadTournament();
 }
 
 document.querySelectorAll('[data-page]').forEach(element => {
@@ -398,6 +396,7 @@ async function refresh() {
     $('#profileLogin').onclick = () => authForm();
 
     await updateRewardsUI();
+
     return;
   }
 
@@ -660,8 +659,7 @@ async function updateRewardsUI() {
 
     tools?.classList.add('hidden');
     locked?.classList.remove('hidden');
-    $('#adminNav').hidden = true;
-    if ($('#admin').classList.contains('shown')) page('home');
+
     return;
   }
 
@@ -671,8 +669,6 @@ async function updateRewardsUI() {
     rewardProfile = response.profile;
 
     const isAdmin = rewardProfile.admin === true;
-    $('#adminNav').hidden = !isAdmin;
-    if (!isAdmin && $('#admin').classList.contains('shown')) page('home');
 
     tools?.classList.toggle('hidden', !isAdmin);
     locked?.classList.toggle('hidden', isAdmin);
@@ -692,8 +688,7 @@ async function updateRewardsUI() {
 
   } catch (error) {
     rewardProfile = null;
-    $('#adminNav').hidden = true;
-    if ($('#admin').classList.contains('shown')) page('home');
+
     show('#inventoryStatus', error.message);
 
     tools?.classList.add('hidden');
@@ -811,10 +806,34 @@ $('#redeemForm').onsubmit = async event => {
     }
 
     $('#rewardCode').value = '';
-    await drawInventory();
 
   } catch (error) {
     show('#redeemMessage', error.message);
+  }
+};
+
+// ==========================================
+// ПЕРВОНАЧАЛЬНАЯ НАСТРОЙКА БАЗЫ
+// ==========================================
+
+$('#bootstrap').onclick = async () => {
+  show(
+    '#bootstrapMsg',
+    'Создаём структуру базы данных…'
+  );
+
+  try {
+    const response = await server('bootstrap');
+
+    show(
+      '#bootstrapMsg',
+      response.message || 'Операция выполнена.'
+    );
+
+    await updateRewardsUI();
+
+  } catch (error) {
+    show('#bootstrapMsg', error.message);
   }
 };
 
@@ -954,139 +973,10 @@ $('#generateForm').onsubmit = async event => {
   }
 };
 
-
-const yearLabel = y => y ? `${y.number} учебный год (${y.startDate} — ${y.endDate})` : '';
-const putOptions = (element, items, emptyLabel) => {
-  element.replaceChildren();
-  if (emptyLabel) element.add(new Option(emptyLabel, ''));
-  for (const item of items) element.add(new Option(item.label, item.id));
-};
-let adminYears = [];
-let adminProfiles = [];
-async function loadTournament(yearId = '') {
-  show('#tournamentStatus', 'Загрузка турнирной таблицы…');
-  try {
-    const result = await publicTournament(yearId);
-    const selector = $('#tournamentYear');
-    const selected = result.year?.id || '';
-    putOptions(selector, (result.years || []).map(y => ({id:y.id,label:yearLabel(y)})));
-    selector.value = selected;
-    if (!result.year) {
-      show('#tournamentStatus','Учебные годы ещё не созданы.');
-      $('#tournamentRanking').replaceChildren();
-      return;
-    }
-    show('#tournamentStatus', `${yearLabel(result.year)} · ${result.year.status === 'active' ? 'Активный' : result.year.status === 'planned' ? 'Запланирован' : 'Завершён'}`);
-    const target = $('#tournamentRanking');
-    target.replaceChildren();
-    for (const [i, player] of (result.ranking || []).entries()) {
-      const row = document.createElement('div');
-      row.className = 'admin-row';
-      const name = document.createElement('span');
-      name.textContent = `${i+1}. ${player.nickname}`;
-      const points = document.createElement('strong');
-      points.textContent = `${player.points} очков`;
-      row.append(name,points);target.append(row);
-    }
-    if (!result.ranking?.length) target.textContent = 'Пока нет участников.';
-  } catch (error) { show('#tournamentStatus',error.message); }
-}
-async function publicTournament(yearId='') {
-  // Гостям доступно чтение через публичное выполнение серверной функции.
-  const execution = await fn.createExecution({
-    functionId:REWARDS_FUNCTION_ID,
-    body:JSON.stringify({action:'tournament',yearId}),
-    async:false,method:'POST',headers:{'content-type':'application/json'}
-  });
-  const result = JSON.parse(execution.responseBody || '{}');
-  if (!result.ok) throw new Error(result.error || 'Ошибка загрузки таблицы.');
-  return result;
-}
-$('#tournamentYear').onchange = event => loadTournament(event.target.value);
-async function loadAdminTournament() {
-  if (!rewardProfile?.admin) return;
-  try {
-    const [yearResult,userResult] = await Promise.all([server('adminYears'),server('adminList')]);
-    adminYears = yearResult.years || [];
-    adminProfiles = userResult.profiles || [];
-    putOptions($('#yearEditSelect'),adminYears.map(y=>({id:y.id,label:yearLabel(y)})),'Новый учебный год');
-    putOptions($('#pointsYear'),adminYears.map(y=>({id:y.id,label:yearLabel(y)})));
-    putOptions($('#pointsPlayer'),adminProfiles.filter(p=>p.approved).map(p=>({id:p.id,label:p.nickname})));
-    const current = adminYears.find(y=>y.status==='active');
-    if (current) $('#pointsYear').value = current.id;
-    $('#yearNumber').value = adminYears.length ? Math.max(...adminYears.map(y=>Number(y.number)))+1 : 1;
-    const today = new Date();
-    const format = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    $('#yearStart').value = format(today);
-    today.setDate(today.getDate()+35);
-    $('#yearEnd').value = format(today);
-    show('#yearMessage','');
-    await loadPointHistory();
-  } catch(error) {show('#yearMessage',error.message);}
-}
-$('#yearEditSelect').onchange = event => {
-  const y = adminYears.find(y=>y.id===event.target.value);
-  if (!y) return loadAdminTournament();
-  $('#yearNumber').value=y.number;$('#yearStart').value=y.startDate;$('#yearEnd').value=y.endDate;
-  show('#yearMessage',`Статус: ${y.status}`);
-};
-$('#yearStart').onchange = () => {
-  if ($('#yearEditSelect').value) return;
-  const start = new Date($('#yearStart').value+'T12:00:00');
-  if (Number.isNaN(start.getTime())) return;
-  start.setDate(start.getDate()+35);
-  $('#yearEnd').value = `${start.getFullYear()}-${String(start.getMonth()+1).padStart(2,'0')}-${String(start.getDate()).padStart(2,'0')}`;
-};
-$('#yearForm').onsubmit = async event => {
-  event.preventDefault();
-  try {
-    const result = await server('saveYear',{yearId:$('#yearEditSelect').value,
-      number:Number($('#yearNumber').value),startDate:$('#yearStart').value,endDate:$('#yearEnd').value});
-    await loadAdminTournament();show('#yearMessage',result.message);await loadTournament();
-  } catch(error){show('#yearMessage',error.message);}
-};
-async function changeYearStatus(status) {
-  const yearId=$('#yearEditSelect').value;
-  if (!yearId) return show('#yearMessage','Сначала выбери сохранённый учебный год.');
-  if (!confirm(status==='active'?'Начать выбранный учебный год?':'Завершить выбранный учебный год?'))return;
-  try {
-    const result=await server('setYearStatus',{yearId,status});
-    await loadAdminTournament();show('#yearMessage',result.message);await loadTournament();
-  }catch(error){show('#yearMessage',error.message);}
-}
-$('#yearStartButton').onclick=()=>changeYearStatus('active');
-$('#yearFinishButton').onclick=()=>changeYearStatus('finished');
-$('#pointsForm').onsubmit=async event=>{
-  event.preventDefault();
-  try {
-    const result=await server('addPoints',{yearId:$('#pointsYear').value,
-      userId:$('#pointsPlayer').value,points:Number($('#pointsDelta').value),
-      reason:$('#pointsReason').value.trim()});
-    $('#pointsDelta').value='';$('#pointsReason').value='';
-    show('#pointsMessage',result.message);await loadPointHistory();await loadTournament();
-  }catch(error){show('#pointsMessage',error.message);}
-};
-async function loadPointHistory(){
-  const yearId=$('#pointsYear').value;
-  if (!yearId)return $('#pointHistory').textContent='Сначала создайте учебный год.';
-  try{
-    const result=await server('pointHistory',{yearId});
-    const target=$('#pointHistory');target.replaceChildren();
-    for(const item of result.history || []){
-      const row=document.createElement('div');row.className='admin-row';
-      row.textContent=`${new Date(item.createdAt).toLocaleString('ru-RU')} · ${item.nickname} · ${item.points>0?'+':''}${item.points} · ${item.reason}`;
-      target.append(row);
-    }
-    if(!result.history?.length)target.textContent='Начислений пока нет.';
-  }catch(error){show('#pointHistory',error.message);}
-}
-$('#pointsYear').onchange=loadPointHistory;
-$('#loadPointHistory').onclick=loadPointHistory;
-
 // ==========================================
 // ЗАПУСК ПРИЛОЖЕНИЯ
 // ==========================================
 
 await loadCards();
+
 await refresh();
-await loadTournament();
