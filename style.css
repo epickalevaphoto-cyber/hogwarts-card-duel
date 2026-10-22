@@ -9,3 +9,8 @@ nav button[hidden], .hidden[hidden] { display:none !important; }
 #tournamentRanking .admin-row, #pointHistory .admin-row { gap:14px; text-align:left; }
 #tournamentRanking strong { color:#e9d39a; white-space:nowrap; }
 #yearForm label, #pointsForm label { min-width:0; }
+
+/* Tournament year selector: match the dark academic theme */
+#tournamentYear { appearance:auto; background-color:#111d31; color:#f9edd7; border:1px solid #9e875e; border-radius:8px; padding:10px 12px; font:inherit; max-width:100%; }
+#tournamentYear option { background-color:#111d31; color:#f9edd7; }
+#tournamentYear:focus-visible { outline:2px solid #d4b16b; outline-offset:2px; }
